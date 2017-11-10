@@ -80,5 +80,5 @@ func calcSUM(str string) uint64 {
 		r += uint64(str[i+1]) >> 2
 		r += uint64(str[i+2]) >> 2
 	}
-	return r ^ (r >> 16)
+	return r ^ (r >> 5)
 }
