@@ -1,5 +1,6 @@
-package cache
+package gcache
 
+/*
 import (
 	"flag"
 	"fmt"
@@ -109,3 +110,4 @@ func handleTCPConnection(conn net.Conn, cache *Cache) {
 	// Close the connection when you're done with it.
 	conn.Close()
 }
+*/
