@@ -50,6 +50,7 @@ func (c *ShardCache) Dead() {
 	for i := range c.shards {
 		c.shards[i].Dead()
 	}
+	c.shards = c.shards[:0]
 }
 
 func (c *ShardCache) Statistic() Stats {
@@ -62,7 +63,7 @@ func (c *ShardCache) Statistic() Stats {
 		atomic.AddInt64(&s.GetSuccessNumber, shardStat.GetSuccessNumber)
 		atomic.AddInt64(&s.ItemsCount, shardStat.ItemsCount)
 		atomic.AddInt64(&s.SetOrReplaceCount, shardStat.SetOrReplaceCount)
-		//size limit can't be set
+		atomic.AddInt64(&s.SizeLimit, shardStat.SizeLimit)
 	}
 	return s
 }

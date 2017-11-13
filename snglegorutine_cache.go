@@ -7,15 +7,17 @@ import (
 
 type GorCache struct {
 	m                 map[string]*Item
-	geterFunc         Getter
+	geterFunc         GetterGorCache
 	stats             Stats
 	defaultExpiration int64
 
-	setChan chan namedItem
-	getChan chan *getterItem
+	setChan   chan namedItem
+	getChan   chan *getterItem
+	purgeChan chan bool
+	deadChan  chan bool
 }
 
-type Getter func(*GorCache, string) []byte
+type GetterGorCache func(*GorCache, string) []byte
 
 type namedItem struct {
 	name string
@@ -30,47 +32,63 @@ type getterItem struct {
 func (c *GorCache) Get(name string) []byte {
 	getter := &getterItem{ //TODO make pool for this
 		name:     name,
-		responce: make(chan []byte),
+		responce: make(chan []byte, 1),
 	}
 	c.getChan <- getter
 	return <-getter.responce
 }
 
 func (c *GorCache) Purge() {
-	//TODO
+	c.purgeChan <- true
 }
 
 func (c *GorCache) Dead() {
-	//TODO
+	c.deadChan <- true
 }
 
 func (c *GorCache) Statistic() Stats {
-	return c.stats //Return copy of stats
+	return c.stats
 }
 
-func (c *GorCache) SetOrUpdate(name string, value []byte, expiration int64) {
+func (c *GorCache) SetOrUpdate(name string, value []byte, expiration time.Duration) {
 	myExpiration := expiration
-	if myExpiration == 0 {
-		myExpiration = c.defaultExpiration
+	var expValue = int64(myExpiration)
+	if expiration == DefaultExpirationMarker {
+		expValue = time.Now().Add(myExpiration).UnixNano()
 	}
 	c.setChan <- namedItem{
 		name: name,
 		item: Item{
 			Object:     value,
-			Expiration: myExpiration,
+			Expiration: expValue,
 		},
 	}
 }
 
-func NewGorCache(sizeLimit int64, defaultExpiration time.Duration, isKeepUsefull bool) *GorCache {
-	cacheMap := make(map[string]*Item)
+func (c *GorCache) purge() {
+	for k := range c.m {
+		delete(c.m, k)
+	}
+}
 
+//NewGorCache create new Gorutine cache (no lock but all in one line)
+// sizeLimit -- set maximum number of items inside cache
+// defaultExpiration -- set expiration for item
+// isKeepUsefull -- reset expiration or not for item
+func NewGorCache(sizeLimit int64, defaultExpiration time.Duration, isKeepUsefull bool) *GorCache {
+	if defaultExpiration <= 0 {
+		defaultExpiration = DefaultExpiration
+	}
 	cache := &GorCache{
-		m:                 cacheMap,
+		m:                 make(map[string]*Item),
 		defaultExpiration: int64(defaultExpiration),
 		stats: Stats{
 			SizeLimit: sizeLimit,
 		},
+		setChan:   make(chan namedItem, 100),
+		getChan:   make(chan *getterItem, 100),
+		purgeChan: make(chan bool),
+		deadChan:  make(chan bool),
 	}
 	if isKeepUsefull {
 		cache.geterFunc = func(c *GorCache, name string) []byte {
@@ -78,20 +96,22 @@ func NewGorCache(sizeLimit int64, defaultExpiration time.Duration, isKeepUsefull
 				item.Expiration = time.Now().Unix() //reset timer it looks usefull item
 				return item.Object
 			}
-			return []byte{}
+			return nil
 		}
 	} else {
 		cache.geterFunc = func(c *GorCache, name string) []byte {
 			if item, ok := c.m[name]; ok {
 				return item.Object
 			}
-			return []byte{}
+			return nil
 		}
 	}
 
+	// working with cache in gorutinge without any lock
 	worker := func(cache *GorCache) {
 		tiker := time.NewTicker(defaultExpiration)
 		stats := &cache.stats
+	loop:
 		for {
 			select {
 			case itm := <-cache.setChan:
@@ -118,11 +138,20 @@ func NewGorCache(sizeLimit int64, defaultExpiration time.Duration, isKeepUsefull
 						atomic.AddInt64(&stats.ItemsCount, -1)
 					}
 				}
-			}
+			case <-cache.purgeChan:
+				atomic.AddInt64(&stats.DeleteCount, int64(len(cache.m)))
+				atomic.StoreInt64(&stats.ItemsCount, int64(0))
+				cache.purge()
 
+			case <-cache.deadChan:
+				atomic.StoreInt64(&stats.ItemsCount, int64(0))
+				cache.purge()
+				break loop
+			}
 		}
 		tiker.Stop()
 	}
+
 	go worker(cache)
 	return cache
 }
