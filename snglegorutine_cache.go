@@ -15,18 +15,23 @@ type GorCache struct {
 	getChan   chan *getterItem
 	purgeChan chan bool
 	deadChan  chan bool
+	statsChan chan *statItem
 }
 
 type GetterGorCache func(*GorCache, string) []byte
 
 type namedItem struct {
 	name string
-	item Item
+	item *Item
 }
 
 type getterItem struct {
 	name     string
 	responce chan []byte
+}
+
+type statItem struct {
+	responce chan Stats
 }
 
 func (c *GorCache) Get(name string) []byte {
@@ -47,7 +52,11 @@ func (c *GorCache) Dead() {
 }
 
 func (c *GorCache) Statistic() Stats {
-	return c.stats
+	getter := &statItem{ //TODO make pool for this
+		responce: make(chan Stats, 1),
+	}
+	c.statsChan <- getter
+	return <-getter.responce
 }
 
 func (c *GorCache) SetOrUpdate(name string, value []byte, expiration time.Duration) {
@@ -58,7 +67,7 @@ func (c *GorCache) SetOrUpdate(name string, value []byte, expiration time.Durati
 	}
 	c.setChan <- namedItem{
 		name: name,
-		item: Item{
+		item: &Item{
 			Object:     value,
 			Expiration: expValue,
 		},
@@ -89,6 +98,7 @@ func NewGorCache(sizeLimit int64, defaultExpiration time.Duration, isKeepUsefull
 		getChan:   make(chan *getterItem, 100),
 		purgeChan: make(chan bool),
 		deadChan:  make(chan bool),
+		statsChan: make(chan *statItem),
 	}
 	if isKeepUsefull {
 		cache.geterFunc = func(c *GorCache, name string) []byte {
@@ -116,7 +126,7 @@ func NewGorCache(sizeLimit int64, defaultExpiration time.Duration, isKeepUsefull
 			select {
 			case itm := <-cache.setChan:
 				if stats.ItemsCount < stats.SizeLimit {
-					cache.m[itm.name] = &itm.item
+					cache.m[itm.name] = itm.item
 					atomic.AddInt64(&stats.SetOrReplaceCount, 1)
 					stats.ItemsCount = int64(len(cache.m))
 				}
@@ -147,6 +157,8 @@ func NewGorCache(sizeLimit int64, defaultExpiration time.Duration, isKeepUsefull
 				atomic.StoreInt64(&stats.ItemsCount, int64(0))
 				cache.purge()
 				break loop
+			case sts := <-cache.statsChan:
+				sts.responce <- cache.stats
 			}
 		}
 		tiker.Stop()
