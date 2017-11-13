@@ -1,21 +1,22 @@
 package gcache
 
-/*
 import (
+	"bufio"
+	"bytes"
 	"flag"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
-	"time"
 )
 
 const (
-	MODE_HTTP = "http"
-	MODE_TCP  = "tcp"
-	MODE_UDP  = "udp"
-	MODE_TLS  = "tls"
+	modeHTTP = "http"
+	modeTCP  = "tcp"
+	modeUDP  = "udp"
+	modeTLS  = "tls"
+	amulet   = "~|~"
 
 //	MODE_TLS  = "https"
 )
@@ -27,18 +28,17 @@ type Config struct {
 	HashFunc    string
 }
 
-func main() {
+func NewCacheServer() {
 	c := Config{}
 	c.initFlags()
-	cache := newCacheWithJanitor(time.Duration(c.Expiration)*time.Second, time.Duration(c.Expiration/10)*time.Second)
-	cache.Add("a", []byte("am"), 0) //TODO delete this line
+	//cache := NewRwCache(10, time.Duration(c.Expiration*time.Second), false)
 	switch c.Mode {
-	case MODE_HTTP:
+	case modeHTTP:
 		err := http.ListenAndServe(c.BindAddress, nil)
 		if err != nil {
 			fmt.Printf("Error: %v", err)
 		}
-	case MODE_TCP:
+	case modeTCP:
 		ln, err := net.Listen("tcp", c.BindAddress)
 		if err != nil {
 			//TODO handle error
@@ -48,10 +48,11 @@ func main() {
 			if err != nil {
 				//TODO handle error
 			}
-			go handleTCPConnection(conn, cache)
+			conn.Close()
+			//go handleTCPConnection(conn, cacher)
 		}
 
-	case MODE_UDP:
+	case modeUDP:
 		udpAdd, err := net.ResolveUDPAddr("", c.BindAddress)
 		if err != nil {
 			log.Fatalln("Could not resolve address: " + c.BindAddress)
@@ -77,9 +78,10 @@ func main() {
 }
 
 func (c *Config) initFlags() {
-	flag.StringVar(&c.Mode, "http", "http", "mode of cachec server: can be "+MODE_HTTP+" "+MODE_TCP+" or "+MODE_UDP)
+	flag.StringVar(&c.Mode, "http", "http", "mode of cachec server: can be "+modeHTTP+" "+modeTCP+" or "+modeUDP)
 	flag.StringVar(&c.BindAddress, "bind", "", "optional options to set listening specific interface: <ip ro hostname>:<port>")
 	flag.IntVar(&c.Expiration, "expiration", 200, "expiration time in seconds")
+
 	flag.Parse()
 
 	if err := c.checkFlags(); err != nil {
@@ -90,24 +92,22 @@ func (c *Config) initFlags() {
 }
 
 func (c *Config) checkFlags() error {
-	if c.Mode == MODE_HTTP || c.Mode == MODE_TCP || c.Mode == MODE_UDP {
+	if c.Mode == modeHTTP || c.Mode == modeTCP || c.Mode == modeUDP {
 		return nil
 	}
 	return fmt.Errorf("Wrong mode: %s", c.Mode)
 }
 
-//TODO rebuild to get set command
-func handleTCPConnection(conn net.Conn, cache *Cache) {
-	// Make a buffer to hold incoming data.
-	buf := make([]byte, 1024)
-	// Read the incoming connection into the buffer.
-	_, err := conn.Read(buf)
+//TODO rebuild to async reader writer
+func handleTCPConnection(conn net.Conn, cache Cacher) {
+	z := bufio.NewReader(conn)
+	v, err := z.ReadBytes(byte('\n'))
 	if err != nil {
-		fmt.Println("Error reading:", err.Error())
+		return
 	}
-	// Send a response back to person contacting us.
-	conn.Write([]byte("Message received."))
-	// Close the connection when you're done with it.
-	conn.Close()
+	data := bytes.SplitN(v, []byte(amulet), 2)
+	if len(data) != 2 {
+		return
+	}
+	cache.SetOrUpdate(string(data[0]), data[1], 0)
 }
-*/
