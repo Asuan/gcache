@@ -1,14 +1,16 @@
 package gcache
 
 import (
-	"bufio"
-	"bytes"
 	"flag"
 	"fmt"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"time"
+
+	"github.com/golang/protobuf/proto"
 )
 
 const (
@@ -31,7 +33,7 @@ type Config struct {
 func NewCacheServer() {
 	c := Config{}
 	c.initFlags()
-	//cache := NewRwCache(10, time.Duration(c.Expiration*time.Second), false)
+	cache := NewRwCache(40000, DefaultExpiration, false)
 	switch c.Mode {
 	case modeHTTP:
 		err := http.ListenAndServe(c.BindAddress, nil)
@@ -43,14 +45,7 @@ func NewCacheServer() {
 		if err != nil {
 			//TODO handle error
 		}
-		for {
-			conn, err := ln.Accept()
-			if err != nil {
-				//TODO handle error
-			}
-			conn.Close()
-			//go handleTCPConnection(conn, cacher)
-		}
+		handleTCPConnection(ln, cache)
 
 	case modeUDP:
 		udpAdd, err := net.ResolveUDPAddr("", c.BindAddress)
@@ -99,15 +94,44 @@ func (c *Config) checkFlags() error {
 }
 
 //TODO rebuild to async reader writer
-func handleTCPConnection(conn net.Conn, cache Cacher) {
-	z := bufio.NewReader(conn)
-	v, err := z.ReadBytes(byte('\n'))
+func handleTCPConnection(ln net.Listener, cache Cacher) {
+
+	conn, err := ln.Accept()
 	if err != nil {
-		return
+		if conn != nil {
+			conn.Close() //
+		}
 	}
-	data := bytes.SplitN(v, []byte(amulet), 2)
-	if len(data) != 2 {
-		return
+	for {
+		//var buf bytes.Buffer
+		//io.Copy(&buf, conn)
+		var t = &TransportItem{}
+		data, err := ioutil.ReadAll(conn)
+		err = proto.Unmarshal(data, t)
+
+		if err != nil {
+			return
+		}
+
+		switch t.Command {
+		case TransportItem_SET:
+			cache.SetOrUpdate(t.GetName(), t.GetObject(), time.Duration(t.GetExpiration()))
+		case TransportItem_GET:
+			data := cache.Get(t.GetName())
+			tr := &TransportItem{
+				Name:    t.GetName(),
+				Object:  data,
+				Command: TransportItem_SET,
+			}
+
+			message, _ := proto.Marshal(tr)
+			conn.Write(message)
+		case TransportItem_PURGE:
+			cache.Purge()
+		case TransportItem_DEAD:
+			cache.Dead()
+			return
+		}
+
 	}
-	cache.SetOrUpdate(string(data[0]), data[1], 0)
 }

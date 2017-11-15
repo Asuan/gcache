@@ -3,11 +3,9 @@ package gcache
 import "time"
 
 const (
-	// For use with functions that take an expiration time.
+	//NoExpiration mean It willl not be deleted by timeout
 	NoExpiration time.Duration = -1
-	// For use with functions that take an expiration time. Equivalent to
-	// passing in the same expiration duration as was given to New() or
-	// NewFrom() when the cache was created (e.g. 5 minutes.)
+	//DefaultExpirationMarker
 	DefaultExpirationMarker time.Duration = 0
 	DefaultExpiration       time.Duration = time.Duration(5 * time.Minute)
 )
@@ -29,9 +27,9 @@ type Cacher interface {
 	Get(name string) []byte
 	//Set or update item
 	SetOrUpdate(name string, value []byte, exp time.Duration)
-	//Purge cache
+	//Purge cache cleanup but it still alive
 	Purge()
-	//Dead should stop cahing and clean
+	//Dead should stop cashing and clean
 	Dead()
 	//Return stats of cache
 	Statistic() Stats
