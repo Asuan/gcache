@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
+	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -17,13 +19,12 @@ const (
 	modeHTTP = "http"
 	modeTCP  = "tcp"
 	modeUDP  = "udp"
-	modeTLS  = "tls"
-	amulet   = "~|~"
 
+//	modeTLS  = "tls"
 //	MODE_TLS  = "https"
 )
 
-type Config struct {
+type ServerConfig struct {
 	Mode        string
 	BindAddress string
 	Expiration  int
@@ -31,9 +32,9 @@ type Config struct {
 }
 
 func NewCacheServer() {
-	c := Config{}
+	c := ServerConfig{}
 	c.initFlags()
-	cache := NewRwCache(40000, DefaultExpiration, false)
+	cache := NewRwCache(nil) //TODO
 	switch c.Mode {
 	case modeHTTP:
 		err := http.ListenAndServe(c.BindAddress, nil)
@@ -72,7 +73,7 @@ func NewCacheServer() {
 
 }
 
-func (c *Config) initFlags() {
+func (c *ServerConfig) initFlags() {
 	flag.StringVar(&c.Mode, "http", "http", "mode of cachec server: can be "+modeHTTP+" "+modeTCP+" or "+modeUDP)
 	flag.StringVar(&c.BindAddress, "bind", "", "optional options to set listening specific interface: <ip ro hostname>:<port>")
 	flag.IntVar(&c.Expiration, "expiration", 200, "expiration time in seconds")
@@ -86,7 +87,7 @@ func (c *Config) initFlags() {
 	}
 }
 
-func (c *Config) checkFlags() error {
+func (c *ServerConfig) checkFlags() error {
 	if c.Mode == modeHTTP || c.Mode == modeTCP || c.Mode == modeUDP {
 		return nil
 	}
@@ -105,7 +106,7 @@ func handleTCPConnection(ln net.Listener, cache Cacher) {
 	for {
 		//var buf bytes.Buffer
 		//io.Copy(&buf, conn)
-		var t = &TransportItem{}
+		var t = &ItemMessage{}
 		data, err := ioutil.ReadAll(conn)
 		err = proto.Unmarshal(data, t)
 
@@ -113,25 +114,68 @@ func handleTCPConnection(ln net.Listener, cache Cacher) {
 			return
 		}
 
-		switch t.Command {
-		case TransportItem_SET:
-			cache.SetOrUpdate(t.GetName(), t.GetObject(), time.Duration(t.GetExpiration()))
-		case TransportItem_GET:
-			data := cache.Get(t.GetName())
-			tr := &TransportItem{
-				Name:    t.GetName(),
-				Object:  data,
-				Command: TransportItem_SET,
-			}
-
-			message, _ := proto.Marshal(tr)
-			conn.Write(message)
-		case TransportItem_PURGE:
-			cache.Purge()
-		case TransportItem_DEAD:
-			cache.Dead()
-			return
-		}
-
 	}
+}
+
+//HandleUDP is
+func HandleUDP(addr *net.UDPAddr, cache Cacher) error {
+	const bufSize = 1500 //Depend on MTU
+	var wg sync.WaitGroup
+	ServerConn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		return err
+	}
+	defer ServerConn.Close()
+	handler := func() {
+		var (
+			buf  = make([]byte, bufSize, bufSize)
+			n    int
+			addr *net.UDPAddr
+			err  error
+		)
+		for {
+			n, addr, err = ServerConn.ReadFromUDP(buf)
+			if err != nil {
+				continue
+			}
+			var t *ItemMessage
+			err = proto.Unmarshal(buf[0:n], t)
+			if err != nil {
+				continue
+			}
+			responce, _ := handleCommand(t, cache)
+			if len(responce) > 0 {
+				ServerConn.WriteToUDP(responce, addr)
+			}
+		}
+		wg.Done()
+	}
+	wg.Add(runtime.NumCPU())
+	for i := 0; i < runtime.NumCPU(); i++ {
+		go handler()
+	}
+
+	wg.Wait()
+	return nil
+}
+
+func handleCommand(t *ItemMessage, cache Cacher) (message []byte, err error) {
+	switch t.Command {
+	case ItemMessage_SET:
+		cache.SetOrUpdate(t.GetName(), t.GetObject(), time.Duration(t.GetExpiration()))
+	case ItemMessage_GET:
+		data := cache.Get(t.GetName())
+		tr := &ItemMessage{
+			Name:    t.GetName(),
+			Object:  data,
+			Command: ItemMessage_SET,
+		}
+		message, err = proto.Marshal(tr)
+		return message, err
+	case ItemMessage_PURGE:
+		cache.Purge()
+	case ItemMessage_DEAD:
+		cache.Dead()
+	}
+	return nil, nil
 }
