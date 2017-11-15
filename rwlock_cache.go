@@ -6,6 +6,7 @@ import (
 	"time"
 )
 
+//Rwlockcache classic cache based on map + ReadWrite lock
 type Rwlockcache struct {
 	defaultExpiration int64
 	l                 sync.RWMutex
@@ -22,6 +23,7 @@ type janitor struct {
 	stop     chan bool
 }
 
+//NewRwCache create new Rwlockcache based on cache config
 func NewRwCache(config ConfigCacheInterface) *Rwlockcache {
 	defaultExpiration := config.GetDefaultExpiration()
 	if defaultExpiration <= 0 {

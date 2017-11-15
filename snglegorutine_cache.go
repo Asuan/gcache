@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+//GorCache is a lock less single gorutine cache (use chan for comunication)
+//It is slow but so fun with async communications
 type GorCache struct {
 	m                 map[string]*Item
 	geterFunc         GetterGorCache
@@ -18,6 +20,7 @@ type GorCache struct {
 	statsChan chan *statItem
 }
 
+//GetterGorCache is a func for different get functionality depend on IsKeepUsefull option.
 type GetterGorCache func(*GorCache, string) []byte
 
 type namedItem struct {
@@ -34,6 +37,7 @@ type statItem struct {
 	responce chan Stats
 }
 
+//Get func is implementation of getting value of cache
 func (c *GorCache) Get(name string) []byte {
 	getter := &getterItem{ //TODO make pool for this
 		name:     name,
@@ -43,14 +47,17 @@ func (c *GorCache) Get(name string) []byte {
 	return <-getter.responce
 }
 
+//Purge func cleanup all items in cache
 func (c *GorCache) Purge() {
 	c.purgeChan <- true
 }
 
+//Dead call deleting of all data na grace stopping cache
 func (c *GorCache) Dead() {
 	c.deadChan <- true
 }
 
+//Statistic return statatistic of current cache
 func (c *GorCache) Statistic() Stats {
 	getter := &statItem{ //TODO make pool for this
 		responce: make(chan Stats, 1),
@@ -59,6 +66,7 @@ func (c *GorCache) Statistic() Stats {
 	return <-getter.responce
 }
 
+//SetOrUpdate set or update cache item
 func (c *GorCache) SetOrUpdate(name string, value []byte, expiration time.Duration) {
 	myExpiration := expiration
 	var expValue = int64(myExpiration)

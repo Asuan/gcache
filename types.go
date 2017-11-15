@@ -5,9 +5,10 @@ import "time"
 const (
 	//NoExpiration mean It willl not be deleted by timeout
 	NoExpiration time.Duration = -1
-	//DefaultExpirationMarker
+	//DefaultExpirationMarker identify is need set default expiration or not
 	DefaultExpirationMarker time.Duration = 0
-	DefaultExpiration       time.Duration = time.Duration(5 * time.Minute)
+	//DefaultExpiration default expiration time
+	DefaultExpiration time.Duration = time.Duration(5 * time.Minute)
 )
 
 //Stats is a statistic holder for cache
