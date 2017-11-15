@@ -1,6 +1,7 @@
 package gcache
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
@@ -9,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +25,8 @@ const (
 //	modeTLS  = "tls"
 //	MODE_TLS  = "https"
 )
+
+var errDead = errors.New("Dead state")
 
 type ServerConfig struct {
 	Mode        string
@@ -120,12 +124,18 @@ func handleTCPConnection(ln net.Listener, cache Cacher) {
 //HandleUDP is
 func HandleUDP(addr *net.UDPAddr, cache Cacher) error {
 	const bufSize = 1500 //Depend on MTU
+	var once sync.Once
 	var wg sync.WaitGroup
+
 	ServerConn, err := net.ListenUDP("udp", addr)
 	if err != nil {
 		return err
 	}
-	defer ServerConn.Close()
+	stopper := func() {
+		ServerConn.Close()
+	}
+	defer once.Do(stopper)
+
 	handler := func() {
 		var (
 			buf  = make([]byte, bufSize, bufSize)
@@ -133,19 +143,29 @@ func HandleUDP(addr *net.UDPAddr, cache Cacher) error {
 			addr *net.UDPAddr
 			err  error
 		)
+	mainLoop:
 		for {
 			n, addr, err = ServerConn.ReadFromUDP(buf)
 			if err != nil {
-				continue
+				errStr := err.Error()
+				//Huh to check closed stte better ?
+				if strings.HasSuffix(errStr, "closed network connection") {
+					break mainLoop
+				}
 			}
+
 			var t *ItemMessage
 			err = proto.Unmarshal(buf[0:n], t)
 			if err != nil {
 				continue
 			}
-			responce, _ := handleCommand(t, cache)
+			responce, err := handleCommand(t, cache)
 			if len(responce) > 0 {
 				ServerConn.WriteToUDP(responce, addr)
+			}
+			if err == errDead {
+				once.Do(stopper)
+				break mainLoop
 			}
 		}
 		wg.Done()
@@ -176,6 +196,7 @@ func handleCommand(t *ItemMessage, cache Cacher) (message []byte, err error) {
 		cache.Purge()
 	case ItemMessage_DEAD:
 		cache.Dead()
+		return nil, errDead
 	}
 	return nil, nil
 }
