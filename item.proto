@@ -1,7 +1,7 @@
 syntax = "proto3";
 package gcache;
 
-message TransportItem{
+message ItemMessage{
     enum Commands {
     SET = 0;
     GET = 1;
@@ -10,6 +10,23 @@ message TransportItem{
   }
     Commands Command =1;
     string Name = 2;
-    sint64 Expiration = 3;
+    int64 Expiration = 3;
     bytes Object = 4;  
+}
+
+
+
+message ConfigMessage{
+  enum CacheTypes {
+    RWL = 0;
+    LOCKONLY = 1;
+    SINGLEGORUTINE = 2;
+    REMOTE = 3;
+  }
+
+  int64 DefaultExpiration =1;
+  sint64 SizeLimit = 2;
+  sint64 ShardCount = 3;
+  bool IsKeepUsefull = 4;
+  CacheTypes CacheType = 5;
 }

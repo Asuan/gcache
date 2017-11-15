@@ -12,9 +12,10 @@ type ShardCache struct {
 	hashCalc   HashCalculator
 }
 
-type ShardGenerator func(int64, time.Duration, bool) Cacher
+type ShardGenerator func(ConfigCacheInterface) Cacher
 
-func NewShardCache(sizeLimit int64, count int, defaultExpiration time.Duration, isKeepUsefull bool, generator ShardGenerator, hashCalc HashCalculator) *ShardCache {
+func NewShardCache(config ConfigShardCacheInterface, generator ShardGenerator, hashCalc HashCalculator) *ShardCache {
+	count := config.GetShardCount()
 	c := &ShardCache{
 		shardCount: uint64(count),
 		shards:     make([]Cacher, count, count),
@@ -22,7 +23,7 @@ func NewShardCache(sizeLimit int64, count int, defaultExpiration time.Duration, 
 	}
 
 	for i := range c.shards {
-		c.shards[i] = generator(sizeLimit, defaultExpiration, isKeepUsefull)
+		c.shards[i] = generator(config)
 	}
 	return c
 }

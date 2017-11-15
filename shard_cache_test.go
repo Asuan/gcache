@@ -8,10 +8,10 @@ import (
 )
 
 func getCacheGorBase() *ShardCache {
-	gen := func(size int64, defaultTimeout time.Duration, isKeepUsefull bool) Cacher {
-		return NewRwCache(size, defaultTimeout, isKeepUsefull)
+	gen := func(config ConfigCacheInterface) Cacher {
+		return NewRwCache(config)
 	}
-	c := NewShardCache(10, 10, -1, true, gen, calcSUM)
+	c := NewShardCache(config, calcSUM)
 	return c
 }
 

@@ -7,7 +7,7 @@ import (
 )
 
 type Rwlockcache struct {
-	defaultExpiration time.Duration
+	defaultExpiration int64
 	l                 sync.RWMutex
 	m                 map[string]*Item
 	janitor           *janitor
@@ -22,22 +22,23 @@ type janitor struct {
 	stop     chan bool
 }
 
-func NewRwCache(sizeLimit int64, defaultExpiration time.Duration, isKeepUsefull bool) *Rwlockcache {
+func NewRwCache(config ConfigCacheInterface) *Rwlockcache {
+	defaultExpiration := config.GetDefaultExpiration()
 	if defaultExpiration <= 0 {
-		defaultExpiration = DefaultExpiration
+		defaultExpiration = int64(DefaultExpiration)
 	}
 	cache := &Rwlockcache{
 		defaultExpiration: defaultExpiration,
 		m:                 make(map[string]*Item),
 		janitor: &janitor{
-			Interval: defaultExpiration * 3, //TODO check fo undenad expiration
+			Interval: time.Duration(defaultExpiration * 5),
 			stop:     make(chan bool),
 		},
 		stats: Stats{
-			SizeLimit: sizeLimit,
+			SizeLimit: config.GetSizeLimit(),
 		},
 	}
-	if isKeepUsefull {
+	if config.GetIsKeepUsefull() {
 		cache.getterFunc = func(cache *Rwlockcache, name string) []byte {
 			cache.l.Lock()
 			if itm, ok := cache.m[name]; ok {
