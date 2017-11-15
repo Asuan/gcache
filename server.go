@@ -172,7 +172,7 @@ func HandleUDP(addr *net.UDPAddr, cache Cacher) error {
 	}
 	wg.Add(runtime.NumCPU())
 	for i := 0; i < runtime.NumCPU(); i++ {
-		go handler()
+		go handler() //little faster
 	}
 
 	wg.Wait()

@@ -6,9 +6,19 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func defaultConfig() ConfigCacheInterface {
+	r := ConfigMessage{
+		SizeLimit:         20000,
+		DefaultExpiration: -1,
+		IsKeepUsefull:     true,
+		CacheType:         ConfigMessage_RWL,
+	}
+	return &r
+}
+
 func TestRwlockcache_Purge(t *testing.T) {
 	as := assert.New(t)
-	c := NewRwCache(10, -1, true)
+	c := NewRwCache(defaultConfig())
 	c.SetOrUpdate("first", []byte(`zaza`), DefaultExpirationMarker)
 	as.Equal(1, len(c.m))
 	c.Purge()
@@ -20,7 +30,7 @@ func TestRwlockcache_Purge(t *testing.T) {
 
 func TestRwlockcache_Get(t *testing.T) {
 	as := assert.New(t)
-	c := NewRwCache(10, -1, true)
+	c := NewRwCache(defaultConfig())
 	c.SetOrUpdate("first", []byte(`zaza`), DefaultExpirationMarker)
 	c.SetOrUpdate("second", []byte(`azaz`), DefaultExpirationMarker)
 
@@ -38,7 +48,7 @@ func TestRwlockcache_Get(t *testing.T) {
 
 func TestRwlockcache_SetOrUpdate(t *testing.T) {
 	as := assert.New(t)
-	c := NewRwCache(10, -1, true)
+	c := NewRwCache(defaultConfig())
 	c.SetOrUpdate("first", []byte(`zaza`), (DefaultExpirationMarker))
 	c.SetOrUpdate("second", []byte(`azaz`), (DefaultExpirationMarker))
 	as.Nil(c.Get("irst"))

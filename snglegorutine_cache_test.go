@@ -8,7 +8,7 @@ import (
 
 func TestGorCache_Purge(t *testing.T) {
 	as := assert.New(t)
-	c := NewGorCache(10, -1, true)
+	c := NewGorCache(defaultConfig())
 	c.SetOrUpdate("first", []byte(`zaza`), DefaultExpirationMarker)
 	c.Get("aa")
 	as.Equal(int64(1), c.Statistic().ItemsCount)
@@ -21,7 +21,7 @@ func TestGorCache_Purge(t *testing.T) {
 
 func TestGorCache_Get(t *testing.T) {
 	as := assert.New(t)
-	c := NewGorCache(10, -1, true)
+	c := NewGorCache(defaultConfig())
 	c.SetOrUpdate("first", []byte(`zaza`), DefaultExpirationMarker)
 	c.SetOrUpdate("second", []byte(`azaz`), DefaultExpirationMarker)
 
@@ -39,7 +39,7 @@ func TestGorCache_Get(t *testing.T) {
 
 func TestGorCache_SetOrUpdate(t *testing.T) {
 	as := assert.New(t)
-	c := NewGorCache(10, -1, true)
+	c := NewGorCache(defaultConfig())
 	c.SetOrUpdate("first", []byte(`zaza`), DefaultExpirationMarker)
 	c.SetOrUpdate("second", []byte(`azaz`), DefaultExpirationMarker)
 	as.Nil(c.Get("irst"))

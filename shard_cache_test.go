@@ -7,11 +7,22 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func defaultShardConfig() ConfigShardCacheInterface {
+	r := ConfigMessage{
+		SizeLimit:         20000,
+		DefaultExpiration: -1,
+		IsKeepUsefull:     true,
+		CacheType:         ConfigMessage_RWL,
+		ShardCount:        10,
+	}
+	return &r
+}
+
 func getCacheGorBase() *ShardCache {
 	gen := func(config ConfigCacheInterface) Cacher {
 		return NewRwCache(config)
 	}
-	c := NewShardCache(config, calcSUM)
+	c := NewShardCache(defaultShardConfig(), gen, calcSUM)
 	return c
 }
 
@@ -29,15 +40,15 @@ func TestShardCache_Purge(t *testing.T) {
 
 func TestShardCache_Get(t *testing.T) {
 	as := assert.New(t)
-	c := NewRwCache(10, -1, true)
+	c := getCacheGorBase()
 	c.SetOrUpdate("first", []byte(`zaza`), DefaultExpirationMarker)
 	c.SetOrUpdate("second", []byte(`azaz`), DefaultExpirationMarker)
 
 	as.Nil(c.Get("irst"))
-	as.Equal(2, len(c.m))
+	as.Equal(int64(2), c.Statistic().ItemsCount)
 	as.Equal([]byte(`zaza`), c.Get("first"))
 	as.Equal([]byte(`azaz`), c.Get("second"))
-	as.Equal(2, len(c.m))
+
 	as.Equal(int64(2), c.Statistic().GetSuccessNumber)
 	as.Equal(int64(1), c.Statistic().GetErrorNumber)
 	as.Equal(int64(2), c.Statistic().ItemsCount)

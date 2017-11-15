@@ -84,15 +84,16 @@ func (c *GorCache) purge() {
 // sizeLimit -- set maximum number of items inside cache
 // defaultExpiration -- set expiration for item
 // isKeepUsefull -- reset expiration or not for item
-func NewGorCache(sizeLimit int64, defaultExpiration time.Duration, isKeepUsefull bool) *GorCache {
+func NewGorCache(config ConfigCacheInterface) *GorCache {
+	defaultExpiration := config.GetDefaultExpiration()
 	if defaultExpiration <= 0 {
-		defaultExpiration = DefaultExpiration
+		defaultExpiration = int64(DefaultExpiration)
 	}
 	cache := &GorCache{
 		m:                 make(map[string]*Item),
 		defaultExpiration: int64(defaultExpiration),
 		stats: Stats{
-			SizeLimit: sizeLimit,
+			SizeLimit: config.GetSizeLimit(),
 		},
 		setChan:   make(chan namedItem, 100),
 		getChan:   make(chan *getterItem, 100),
@@ -100,7 +101,7 @@ func NewGorCache(sizeLimit int64, defaultExpiration time.Duration, isKeepUsefull
 		deadChan:  make(chan bool),
 		statsChan: make(chan *statItem),
 	}
-	if isKeepUsefull {
+	if config.GetIsKeepUsefull() {
 		cache.geterFunc = func(c *GorCache, name string) []byte {
 			if item, ok := c.m[name]; ok {
 				item.Expiration = time.Now().Unix() //reset timer it looks usefull item
@@ -119,7 +120,7 @@ func NewGorCache(sizeLimit int64, defaultExpiration time.Duration, isKeepUsefull
 
 	// working with cache in gorutinge without any lock
 	worker := func(cache *GorCache) {
-		tiker := time.NewTicker(defaultExpiration)
+		tiker := time.NewTicker(time.Duration(defaultExpiration))
 		stats := &cache.stats
 	loop:
 		for {
