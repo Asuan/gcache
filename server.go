@@ -4,6 +4,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -18,22 +19,28 @@ import (
 )
 
 const (
-	modeHTTP = "http"
-	modeTCP  = "tcp"
-	modeUDP  = "udp"
-
-//	modeTLS  = "tls"
-//	MODE_TLS  = "https"
+	modeHTTP         = "http"
+	modeTCPLong      = "tcp_long"
+	modeTCPShort     = "tcp_short"
+	modeUDP          = "udp"
+	systemBufferSize = 1e6 //1Mb
+	maxPacketSize    = 1e5 //10Kb
+	//	modeTLS  = "tls"
+	//	MODE_TLS  = "https"
+	amulet              = byte(30) //ANCI Record separator
+	closendErrorMessage = "closed network connection"
 )
 
 var errDead = errors.New("Dead state")
 
+//TODO remove protobuf write custom Marshal demarhsal
 type ServerConfig struct {
 	Mode        string
 	BindAddress string
 	Expiration  int
 	HashFunc    string
 }
+type TCPHandler func(*net.TCPListener, Cacher)
 
 func NewCacheServer() {
 	c := ServerConfig{}
@@ -43,33 +50,33 @@ func NewCacheServer() {
 	case modeHTTP:
 		err := http.ListenAndServe(c.BindAddress, nil)
 		if err != nil {
-			fmt.Printf("Error: %v", err)
+			log.Fatalln("Could not bind address: " + c.BindAddress + " error: " + err.Error())
 		}
-	case modeTCP:
-		ln, err := net.Listen("tcp", c.BindAddress)
+	case modeTCPLong, modeTCPShort:
+		tcpAddr, err := net.ResolveTCPAddr("tcp", c.BindAddress)
 		if err != nil {
-			//TODO handle error
+			log.Fatalln("Could not resolve address: " + c.BindAddress + " error: " + err.Error())
 		}
-		handleTCPConnection(ln, cache)
+		ln, err := net.ListenTCP("tcp", tcpAddr)
+		if err != nil {
+			log.Fatalln("Could not bind address: " + c.BindAddress + " error: " + err.Error())
+		}
+		if c.Mode == modeTCPLong {
+			handleLongTCP(ln, cache)
+		} else {
+			handleShortTCP(ln, cache)
+		}
 
 	case modeUDP:
-		udpAdd, err := net.ResolveUDPAddr("", c.BindAddress)
+		udpAdd, err := net.ResolveUDPAddr("udp", c.BindAddress)
 		if err != nil {
-			log.Fatalln("Could not resolve address: " + c.BindAddress)
+			log.Fatalln("Could not resolve address: " + c.BindAddress + " error: " + err.Error())
 		}
-		lnu, err := net.ListenUDP("udp", udpAdd)
+		conn, err := net.ListenUDP("udp", udpAdd)
 		if err != nil {
-			//TODO handle error
+			log.Fatalln("Could not resolve address: " + c.BindAddress + " error: " + err.Error())
 		}
-		for {
-			buf := make([]byte, 8192) //TODO parametrize it 8k
-			_, _, err := lnu.ReadFromUDP(buf)
-			//TODO hande incoming message.
-
-			if err != nil {
-				log.Fatal(err)
-			}
-		}
+		HandleUDP(conn, cache)
 
 	default:
 		panic("Not implemented mode : " + c.Mode)
@@ -78,7 +85,7 @@ func NewCacheServer() {
 }
 
 func (c *ServerConfig) initFlags() {
-	flag.StringVar(&c.Mode, "http", "http", "mode of cachec server: can be "+modeHTTP+" "+modeTCP+" or "+modeUDP)
+	flag.StringVar(&c.Mode, "http", "http", "mode of cachec server: can be "+modeHTTP+" "+modeTCPLong+" or "+modeUDP)
 	flag.StringVar(&c.BindAddress, "bind", "", "optional options to set listening specific interface: <ip ro hostname>:<port>")
 	flag.IntVar(&c.Expiration, "expiration", 200, "expiration time in seconds")
 
@@ -92,53 +99,150 @@ func (c *ServerConfig) initFlags() {
 }
 
 func (c *ServerConfig) checkFlags() error {
-	if c.Mode == modeHTTP || c.Mode == modeTCP || c.Mode == modeUDP {
+	if c.Mode == modeHTTP || c.Mode == modeTCPLong || c.Mode == modeUDP {
 		return nil
 	}
 	return fmt.Errorf("Wrong mode: %s", c.Mode)
 }
 
-//TODO rebuild to async reader writer
-func handleTCPConnection(ln net.Listener, cache Cacher) {
+//handleShortTCP expect only one message via tcp and return data for each
+func handleShortTCP(ln *net.TCPListener, cache Cacher) {
+	var (
+		once    sync.Once
+		income  = make(chan *net.TCPConn, 10)
+		wg      sync.WaitGroup
+		stopper = func() {
+			close(income)
+			ln.Close()
+		}
+	)
+	handler := func(inCon <-chan *net.TCPConn) {
+		defer wg.Done()
+		for c := range inCon {
+			data, err := ioutil.ReadAll(c) //End client should close write tcp we wait eof
 
-	conn, err := ln.Accept()
-	if err != nil {
-		if conn != nil {
-			conn.Close() //
+			var t *ItemMessage
+			err = proto.Unmarshal(data, t)
+			if err != nil {
+				c.Close()
+				continue
+			}
+			result, err := handleRequest(t, cache)
+			if err == errDead {
+				c.Close()
+				once.Do(stopper)
+				return
+			}
+			if len(result) > 0 {
+				c.Write(result) //Do not care about error we can't do anything with error
+			}
+			c.Close()
 		}
 	}
+
+	wg.Add(runtime.NumCPU())
+	for i := 0; i < runtime.NumCPU(); i++ {
+		go handler(income)
+	}
+
 	for {
-		//var buf bytes.Buffer
-		//io.Copy(&buf, conn)
-		var t = &ItemMessage{}
-		data, err := ioutil.ReadAll(conn)
-		err = proto.Unmarshal(data, t)
+		conn, err := ln.AcceptTCP()
 
 		if err != nil {
-			return
+			errStr := err.Error()
+			//How to check closed conn better ?
+			if strings.Contains(errStr, closendErrorMessage) {
+				once.Do(stopper)
+				break
+			}
+			if conn != nil {
+				conn.Close() // some error appear do not try to handle income request
+			}
+			continue
 		}
-
+		income <- conn
 	}
+
+	wg.Wait()
 }
 
-//HandleUDP is
-func HandleUDP(addr *net.UDPAddr, cache Cacher) error {
-	const bufSize = 1500 //Depend on MTU
-	var once sync.Once
-	var wg sync.WaitGroup
+//handleLongTCP expecte open connection and communicate without closing of this
+func handleLongTCP(ln *net.TCPListener, cache Cacher) {
+	var (
+		once sync.Once
 
-	ServerConn, err := net.ListenUDP("udp", addr)
-	if err != nil {
-		return err
+		stopper = func() {
+			ln.Close()
+		}
+	)
+	handler := func(c *net.TCPConn) {
+		buf := make([]byte, maxPacketSize, maxPacketSize)
+		for eof := false; eof; {
+			n, err := c.Read(buf)
+			if err != nil {
+				if err == io.EOF {
+					eof = true
+					break
+				}
+			}
+			if n == 0 {
+				continue //Empty request
+			}
+			var t = &ItemMessage{} //TODO pool messages protobuf sucs
+			err = proto.Unmarshal(buf[:n], t)
+			if err != nil {
+				continue
+			}
+			result, err := handleRequest(t, cache)
+			if err == errDead {
+				once.Do(stopper)
+				break
+			}
+
+			if len(result) > 0 {
+				c.Write(result) //Do not care about error we can't do anything with error
+			}
+		}
+		c.Close()
+
 	}
-	stopper := func() {
-		ServerConn.Close()
+
+	for {
+		conn, err := ln.AcceptTCP()
+
+		if err != nil {
+			errStr := err.Error()
+			//How to check closed conn better ?
+			if strings.Contains(errStr, closendErrorMessage) {
+				once.Do(stopper)
+				break
+			}
+			if conn != nil {
+				conn.Close() // some error appear do not try to handle income request
+			}
+			continue
+		}
+		go handler(conn) //Long handler
 	}
+
+}
+
+//HandleUDP is simple handeler with worker pool, we have limitation with updpacket size to bufSize
+func HandleUDP(ServerConn *net.UDPConn, cache Cacher) error {
+
+	var (
+		once    sync.Once
+		wg      sync.WaitGroup
+		stopper = func() {
+			ServerConn.Close()
+		}
+	)
+
 	defer once.Do(stopper)
-
+	ServerConn.SetReadBuffer(systemBufferSize)
 	handler := func() {
 		var (
-			buf  = make([]byte, bufSize, bufSize)
+			buf  = make([]byte, maxPacketSize, maxPacketSize) //TODO pool ?
 			n    int
 			addr *net.UDPAddr
 			err  error
@@ -148,8 +252,8 @@ func HandleUDP(addr *net.UDPAddr, cache Cacher) error {
 			n, addr, err = ServerConn.ReadFromUDP(buf)
 			if err != nil {
 				errStr := err.Error()
-				//Huh to check closed stte better ?
-				if strings.HasSuffix(errStr, "closed network connection") {
+				//How to check closed conn better ?
+				if strings.Contains(errStr, closendErrorMessage) {
 					break mainLoop
 				}
 			}
@@ -159,7 +263,7 @@ func HandleUDP(addr *net.UDPAddr, cache Cacher) error {
 			if err != nil {
 				continue
 			}
-			responce, err := handleCommand(t, cache)
+			responce, err := handleRequest(t, cache)
 			if len(responce) > 0 {
 				ServerConn.WriteToUDP(responce, addr)
 			}
@@ -170,23 +274,29 @@ func HandleUDP(addr *net.UDPAddr, cache Cacher) error {
 		}
 		wg.Done()
 	}
+
 	wg.Add(runtime.NumCPU())
 	for i := 0; i < runtime.NumCPU(); i++ {
-		go handler() //little faster
+		go handler() //a little faster with multiple UDP packet
 	}
 
 	wg.Wait()
+
 	return nil
 }
 
-func handleCommand(t *ItemMessage, cache Cacher) (message []byte, err error) {
+func handleRequest(t *ItemMessage, cache Cacher) (message []byte, err error) {
+	var (
+		name   = t.GetName()
+		object = t.GetObject()
+	)
 	switch t.Command {
 	case ItemMessage_SET:
-		cache.SetOrUpdate(t.GetName(), t.GetObject(), time.Duration(t.GetExpiration()))
+		cache.SetOrUpdate(name, object, time.Duration(t.GetExpiration()))
 	case ItemMessage_GET:
-		data := cache.Get(t.GetName())
+		data := cache.Get(name)
 		tr := &ItemMessage{
-			Name:    t.GetName(),
+			Name:    name,
 			Object:  data,
 			Command: ItemMessage_SET,
 		}
